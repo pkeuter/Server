@@ -109,6 +109,11 @@ public:
 		return true;
 	}
 
+	core::hardware_frame_type hardware_frame_support() const override
+	{
+		return core::hardware_frame_type::no_video_processing;
+	}
+
 	int buffer_depth() const override
 	{
 		return -1;

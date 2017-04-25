@@ -12,6 +12,8 @@
 #include <common/cache_aligned_vector.h>
 #include <common/timer.h>
 
+#include <boost/any.hpp>
+
 #include <cstddef>
 #include <cstdint>
 
@@ -73,6 +75,14 @@ private:
 	spl::unique_ptr<impl> impl_;
 };
 
+enum class hardware_frame_type
+{
+	no_video_processing,
+	only_in_system_memory,
+	any,
+	opengl
+};
+
 class const_frame final
 {
 	struct impl;
@@ -85,11 +95,13 @@ public:
 	// Constructors
 
 	explicit const_frame(const void* tag = nullptr);
-	explicit const_frame(std::shared_future<array<const std::uint8_t>> image,
-						audio_buffer audio_data,
-						const void* tag,
-						const pixel_format_desc& desc,
-						const audio_channel_layout& channel_layout);
+	explicit const_frame(
+			std::shared_future<array<const std::uint8_t>> image,
+			std::shared_future<boost::any> hardware_image,
+			audio_buffer audio_data,
+			const void* tag,
+			const pixel_format_desc& desc,
+			const audio_channel_layout& channel_layout);
 	const_frame(mutable_frame&& other);
 	~const_frame();
 
@@ -109,6 +121,7 @@ public:
 	const core::audio_channel_layout& audio_channel_layout() const;
 
 	array<const std::uint8_t> image_data(int index = 0) const;
+	boost::any hardware_image_data() const;
 	const core::audio_buffer& audio_data() const;
 
 	std::size_t width() const;

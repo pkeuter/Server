@@ -35,9 +35,9 @@
 #include <boost/thread/future.hpp>
 
 namespace caspar { namespace accelerator { namespace ogl {
-	
+
 static GLenum FORMAT[] = {0, GL_RED, GL_RG, GL_BGR, GL_BGRA};
-static GLenum INTERNAL_FORMAT[] = {0, GL_R8, GL_RG8, GL_RGB8, GL_RGBA8};	
+static GLenum INTERNAL_FORMAT[] = {0, GL_R8, GL_RG8, GL_RGB8, GL_RGBA8};
 static GLenum TYPE[]			= { 0, GL_UNSIGNED_BYTE, GL_UNSIGNED_BYTE, GL_UNSIGNED_BYTE, GL_UNSIGNED_BYTE };
 static GLenum READPIXELS_TYPE[]	= { 0, GL_UNSIGNED_BYTE, GL_UNSIGNED_BYTE, GL_UNSIGNED_BYTE, GL_UNSIGNED_INT_8_8_8_8_REV };
 
@@ -53,12 +53,12 @@ struct texture::impl : boost::noncopyable
 	const int	stride_;
 	const bool	mipmapped_;
 public:
-	impl(int width, int height, int stride, bool mipmapped) 
+	impl(int width, int height, int stride, bool mipmapped)
 		: width_(width)
 		, height_(height)
 		, stride_(stride)
 		, mipmapped_(mipmapped)
-	{	
+	{
 		CASPAR_LOG_CALL(trace) << "texture::texture() <- " << get_context();
 
 		GL(glGenTextures(1, &id_));
@@ -78,8 +78,8 @@ public:
 		GL(glBindTexture(GL_TEXTURE_2D, 0));
 		g_total_count++;
 		g_total_size += static_cast<std::size_t>(width * height * stride * (mipmapped ? 1.33 : 1.0));
-		//CASPAR_LOG(trace) << "[texture] [" << ++g_total_count << L"] allocated size:" << width*height*stride;	
-	}	
+		//CASPAR_LOG(trace) << "[texture] [" << ++g_total_count << L"] allocated size:" << width*height*stride;
+	}
 
 	void enable_anosotropic_filtering_if_available()
 	{
@@ -105,7 +105,7 @@ public:
 		g_total_size -= static_cast<std::size_t>(width_ * height_ * stride_ * (mipmapped_ ? 1.33 : 1.0));
 		g_total_count--;
 	}
-	
+
 	void bind()
 	{
 		GL(glBindTexture(GL_TEXTURE_2D, id_));
@@ -123,16 +123,16 @@ public:
 	}
 
 	void attach()
-	{		
+	{
 		GL(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 0, GL_TEXTURE_2D, id_, 0));
 	}
 
 	void clear()
 	{
-		attach();		
+		attach();
 		GL(glClear(GL_COLOR_BUFFER_BIT));
 	}
-		
+
 	void copy_from(buffer& source)
 	{
 		CASPAR_LOG_CALL(trace) << "texture::copy_from(buffer&) <- " << get_context();
@@ -152,6 +152,7 @@ public:
 	void copy_to(buffer& dest)
 	{
 		CASPAR_LOG_CALL(trace) << "texture::copy_to(buffer&) <- " << get_context();
+		attach();
 		dest.unmap();
 		dest.bind();
 		GL(glBindTexture(GL_TEXTURE_2D, id_));

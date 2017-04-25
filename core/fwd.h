@@ -36,6 +36,7 @@ FORWARD2(caspar, core, class frame_consumer);
 FORWARD2(caspar, core, struct interaction_sink);
 FORWARD2(caspar, core, class draw_frame);
 FORWARD2(caspar, core, class mutable_frame);
+FORWARD2(caspar, core, enum class hardware_frame_type);
 FORWARD2(caspar, core, class const_frame);
 FORWARD2(caspar, core, class video_channel);
 FORWARD2(caspar, core, struct pixel_format_desc);

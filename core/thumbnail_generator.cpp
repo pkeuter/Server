@@ -299,7 +299,7 @@ public:
 
 			std::shared_ptr<void> ticket(nullptr, [&thumbnail_ready](void*) { thumbnail_ready.set_value(); });
 
-			auto mixed_frame = mixer_(std::move(frames), format_desc_, audio_channel_layout(2, L"stereo", L""));
+			auto mixed_frame = mixer_(std::move(frames), format_desc_, audio_channel_layout(2, L"stereo", L""), true, false);
 
 			output_->send(std::move(mixed_frame), ticket);
 			ticket.reset();

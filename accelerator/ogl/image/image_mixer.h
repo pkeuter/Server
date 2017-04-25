@@ -24,6 +24,7 @@
 #include <common/forward.h>
 #include <common/memory.h>
 #include <common/future_fwd.h>
+#include <common/diagnostics/graph.h>
 
 #include <core/mixer/image/blend_modes.h>
 #include <core/mixer/image/image_mixer.h>
@@ -33,7 +34,7 @@
 #include <core/video_format.h>
 
 namespace caspar { namespace accelerator { namespace ogl {
-	
+
 class image_mixer final : public core::image_mixer
 {
 	image_mixer(const image_mixer&);
@@ -41,15 +42,16 @@ class image_mixer final : public core::image_mixer
 public:
 
 	// Static Members
-	
+
 	// Constructors
 
-	image_mixer(const spl::shared_ptr<class device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted, int channel_id);
+	image_mixer(const spl::shared_ptr<diagnostics::graph>& graph, const spl::shared_ptr<class device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted, int channel_id);
 	~image_mixer();
 
 	// Methods
-			
-	std::future<array<const std::uint8_t>> operator()(const core::video_format_desc& format_desc, bool straighten_alpha) override;
+
+	std::shared_future<boost::any> render_hardware_frame(const core::video_format_desc& format_desc, bool straighten_alpha) override;
+	std::shared_future<array<const std::uint8_t>> readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc) override;
 	core::mutable_frame create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) override;
 
 	// core::image_mixer
@@ -57,10 +59,11 @@ public:
 	void push(const core::frame_transform& frame) override;
 	void visit(const core::const_frame& frame) override;
 	void pop() override;
-			
+
 	// Properties
 
 	int get_max_frame_size() override;
+	core::hardware_frame_type get_hardware_frame_type() const override;
 
 private:
 	struct impl;

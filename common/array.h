@@ -11,7 +11,7 @@
 #include "assert.h"
 
 namespace caspar {
-	
+
 template<typename T>
 class array final
 {
@@ -29,7 +29,7 @@ public:
 	// Static Members
 
 	// Constructors
-	
+
 	template<typename T2>
 	explicit array(T* ptr, std::size_t size, bool cacheable, T2&& storage)
 		: ptr_(ptr)
@@ -49,7 +49,7 @@ public:
 	}
 
 	// Methods
-	
+
 	array& operator=(array&& other)
 	{
 		std::swap(ptr_,	other.ptr_);
@@ -62,15 +62,15 @@ public:
 		return *this;
 	}
 
-	// Properties	
-			
-	T* begin() const			{return ptr_;}		
+	// Properties
+
+	T* begin() const			{return ptr_;}
 	T* data() const				{return ptr_;}
 	T* end() const				{return ptr_ + size_;}
 	std::size_t size() const	{return size_;}
 	bool empty() const			{return size() == 0;}
 	bool cacheable() const		{return cacheable_;}
-	
+
 	template<typename T2>
 	T2* storage() const
 	{
@@ -121,7 +121,6 @@ public:
 		, cacheable_(other.cacheable_)
 		, storage_(other.storage_)
 	{
-		CASPAR_ASSERT(storage_);
 	}
 
 	array(array<T>&& other)
@@ -150,14 +149,14 @@ public:
 	}
 
 	// Properties
-			
-	const T* begin() const		{return ptr_;}		
+
+	const T* begin() const		{return ptr_;}
 	const T* data() const		{return ptr_;}
 	const T* end() const		{return ptr_ + size_;}
 	std::size_t size() const	{return size_;}
 	bool empty() const			{return size() == 0;}
 	bool cacheable() const		{return cacheable_;}
-	
+
 	template<typename T2>
 	T2* storage() const
 	{
@@ -174,7 +173,7 @@ private:
 }
 
 namespace std {
-	
+
 template<typename T>
 void swap(caspar::array<const T>& lhs, caspar::array<const T>& rhs)
 {
@@ -182,4 +181,3 @@ void swap(caspar::array<const T>& lhs, caspar::array<const T>& rhs)
 }
 
 }
-

@@ -23,6 +23,7 @@
 
 #include <common/memory.h>
 #include <common/forward.h>
+#include <common/diagnostics/graph.h>
 
 #include "fwd.h"
 
@@ -48,6 +49,7 @@ public:
 			int index,
 			const video_format_desc& format_desc,
 			const audio_channel_layout& channel_layout,
+			spl::shared_ptr<caspar::diagnostics::graph> graph,
 			std::unique_ptr<image_mixer> image_mixer);
 	~video_channel();
 

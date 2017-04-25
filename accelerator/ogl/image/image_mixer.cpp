@@ -32,6 +32,7 @@
 #include <common/future.h>
 #include <common/array.h>
 #include <common/linq.h>
+#include <common/diagnostics/graph.h>
 
 #include <core/frame/frame.h>
 #include <core/frame/frame_transform.h>
@@ -81,24 +82,29 @@ std::size_t get_max_video_format_size()
 
 class image_renderer
 {
-	spl::shared_ptr<device>	ogl_;
-	image_kernel			kernel_;
+	spl::shared_ptr<diagnostics::graph>	graph_;
+	spl::shared_ptr<device>				ogl_;
+	image_kernel						kernel_;
 public:
-	image_renderer(const spl::shared_ptr<device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted)
-		: ogl_(ogl)
+	image_renderer(
+			const spl::shared_ptr<diagnostics::graph>& graph,
+			const spl::shared_ptr<device>& ogl,
+			bool blend_modes_wanted,
+			bool straight_alpha_wanted)
+		: graph_(graph)
+		, ogl_(ogl)
 		, kernel_(ogl_, blend_modes_wanted, straight_alpha_wanted)
 	{
 	}
 
-	std::future<array<const std::uint8_t>> operator()(std::vector<layer> layers, const core::video_format_desc& format_desc, bool straighten_alpha)
+	std::shared_future<boost::any> render_hardware_frame(std::vector<layer> layers, const core::video_format_desc& format_desc, bool straighten_alpha)
 	{
 		if(layers.empty())
 		{ // Bypass GPU with empty frame.
-			static const cache_aligned_vector<uint8_t> buffer(get_max_video_format_size(), 0);
-			return make_ready_future(array<const std::uint8_t>(buffer.data(), format_desc.size, true));
+			return std::shared_future<boost::any>();
 		}
 
-		return flatten(ogl_->begin_invoke([=]() mutable -> std::shared_future<array<const std::uint8_t>>
+		return ogl_->begin_invoke([=]
 		{
 			auto target_texture = ogl_->create_texture(format_desc.width, format_desc.height, 4, false);
 
@@ -112,9 +118,34 @@ public:
 
 			kernel_.post_process(target_texture, straighten_alpha);
 
-			target_texture->attach();
+			// Make sure that everything is drawn if used from separate context such as the screen consumer.
+			glFlush();
 
-			return ogl_->copy_async(target_texture);
+			return boost::any(target_texture);
+		});
+	}
+
+	std::shared_future<array<const std::uint8_t>> readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc)
+	{
+		if(!hardware_frame.valid())
+		{ // Bypass GPU with empty frame.
+			static const cache_aligned_vector<uint8_t> buffer(get_max_video_format_size(), 0);
+			return make_ready_future(array<const std::uint8_t>(buffer.data(), format_desc.size, true));
+		}
+
+		return flatten(ogl_->begin_invoke([=]
+		{
+			auto target_texture		= boost::any_cast<spl::shared_ptr<texture>>(hardware_frame.get());
+			auto readback_future	= ogl_->copy_async(target_texture).share();
+
+			return std::async(std::launch::deferred, [=]
+			{
+				caspar::timer blocking_readback_timer;
+				auto result = readback_future.get();
+				graph_->set_value("blocking-readback-time", blocking_readback_timer.elapsed() * format_desc.fps * 0.5);
+
+				return result;
+			}).share();
 		}));
 	}
 
@@ -270,15 +301,22 @@ private:
 
 struct image_mixer::impl : public core::frame_factory
 {
+	spl::shared_ptr<diagnostics::graph>	graph_;
 	spl::shared_ptr<device>				ogl_;
 	image_renderer						renderer_;
 	std::vector<core::image_transform>	transform_stack_;
 	std::vector<layer>					layers_; // layer/stream/items
 	std::vector<layer*>					layer_stack_;
 public:
-	impl(const spl::shared_ptr<device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted, int channel_id)
-		: ogl_(ogl)
-		, renderer_(ogl, blend_modes_wanted, straight_alpha_wanted)
+	impl(
+			const spl::shared_ptr<diagnostics::graph>& graph,
+			const spl::shared_ptr<device>& ogl,
+			bool blend_modes_wanted,
+			bool straight_alpha_wanted,
+			int channel_id)
+		: graph_(graph)
+		, ogl_(ogl)
+		, renderer_(graph, ogl, blend_modes_wanted, straight_alpha_wanted)
 		, transform_stack_(1)
 	{
 		CASPAR_LOG(info) << L"Initialized OpenGL Accelerated GPU Image Mixer for channel " << channel_id;
@@ -324,9 +362,17 @@ public:
 		item.transform	= transform_stack_.back();
 		item.geometry	= frame.geometry();
 
-		// NOTE: Once we have copied the arrays they are no longer valid for reading!!! Check for alternative solution e.g. transfer with AMD_pinned_memory.
-		for(int n = 0; n < static_cast<int>(item.pix_desc.planes.size()); ++n)
-			item.textures.push_back(ogl_->copy_async(frame.image_data(n), item.pix_desc.planes[n].width, item.pix_desc.planes[n].height, item.pix_desc.planes[n].stride, item.transform.use_mipmap));
+		if (frame.hardware_image_data().empty())
+		{
+			// NOTE: Once we have copied the arrays they are no longer valid for reading!!! Check for alternative solution e.g. transfer with AMD_pinned_memory.
+			for (int n = 0; n < static_cast<int>(item.pix_desc.planes.size()); ++n)
+				item.textures.push_back(ogl_->copy_async(frame.image_data(n), item.pix_desc.planes[n].width, item.pix_desc.planes[n].height, item.pix_desc.planes[n].stride, item.transform.use_mipmap));
+		}
+		else
+			item.textures.push_back(
+					make_ready_future<std::shared_ptr<texture>>(
+							boost::any_cast<spl::shared_ptr<texture>>(
+									frame.hardware_image_data())));
 
 		layer_stack_.back()->items.push_back(item);
 	}
@@ -337,9 +383,14 @@ public:
 		layer_stack_.resize(transform_stack_.back().layer_depth);
 	}
 
-	std::future<array<const std::uint8_t>> render(const core::video_format_desc& format_desc, bool straighten_alpha)
+	std::shared_future<boost::any> render_hardware_frame(const core::video_format_desc& format_desc, bool straighten_alpha)
 	{
-		return renderer_(std::move(layers_), format_desc, straighten_alpha);
+		return renderer_.render_hardware_frame(std::move(layers_), format_desc, straighten_alpha);
+	}
+
+	std::shared_future<array<const std::uint8_t>> readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc)
+	{
+		return renderer_.readback(hardware_frame, format_desc);
 	}
 
 	core::mutable_frame create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) override
@@ -362,13 +413,15 @@ public:
 	}
 };
 
-image_mixer::image_mixer(const spl::shared_ptr<device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted, int channel_id) : impl_(new impl(ogl, blend_modes_wanted, straight_alpha_wanted, channel_id)){}
+image_mixer::image_mixer(const spl::shared_ptr<diagnostics::graph>& graph, const spl::shared_ptr<device>& ogl, bool blend_modes_wanted, bool straight_alpha_wanted, int channel_id) : impl_(new impl(graph, ogl, blend_modes_wanted, straight_alpha_wanted, channel_id)){}
 image_mixer::~image_mixer(){}
 void image_mixer::push(const core::frame_transform& transform){impl_->push(transform);}
 void image_mixer::visit(const core::const_frame& frame){impl_->visit(frame);}
 void image_mixer::pop(){impl_->pop();}
 int image_mixer::get_max_frame_size() { return impl_->get_max_frame_size(); }
-std::future<array<const std::uint8_t>> image_mixer::operator()(const core::video_format_desc& format_desc, bool straighten_alpha){return impl_->render(format_desc, straighten_alpha);}
+core::hardware_frame_type image_mixer::get_hardware_frame_type() const { return core::hardware_frame_type::opengl; }
+std::shared_future<boost::any> image_mixer::render_hardware_frame(const core::video_format_desc& format_desc, bool straighten_alpha) { return impl_->render_hardware_frame(format_desc, straighten_alpha); }
+std::shared_future<array<const std::uint8_t>> image_mixer::readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc) { return impl_->readback(hardware_frame, format_desc); }
 core::mutable_frame image_mixer::create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) {return impl_->create_frame(tag, desc, channel_layout);}
 
 }}}

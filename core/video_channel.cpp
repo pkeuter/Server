@@ -28,6 +28,7 @@
 #include "producer/stage.h"
 #include "mixer/mixer.h"
 #include "consumer/output.h"
+#include "consumer/frame_consumer.h"
 #include "frame/frame.h"
 #include "frame/draw_frame.h"
 #include "frame/frame_factory.h"
@@ -64,12 +65,7 @@ struct video_channel::impl final
 	mutable tbb::spin_mutex								channel_layout_mutex_;
 	core::audio_channel_layout							channel_layout_;
 
-	const spl::shared_ptr<caspar::diagnostics::graph>	graph_					= [](int index)
-																				  {
-																					  core::diagnostics::scoped_call_context save;
-																					  core::diagnostics::call_context::for_thread().video_channel = index;
-																					  return spl::make_shared<caspar::diagnostics::graph>();
-																				  }(index_);
+	const spl::shared_ptr<caspar::diagnostics::graph>	graph_;
 
 	caspar::core::output								output_;
 	std::future<void>									output_ready_for_frame_	= make_ready_future();
@@ -87,12 +83,14 @@ public:
 			int index,
 			const core::video_format_desc& format_desc,
 			const core::audio_channel_layout& channel_layout,
+			spl::shared_ptr<caspar::diagnostics::graph> graph,
 			std::unique_ptr<image_mixer> image_mixer)
 		: monitor_subject_(spl::make_shared<monitor::subject>(
 				"/channel/" + boost::lexical_cast<std::string>(index)))
 		, index_(index)
 		, format_desc_(format_desc)
 		, channel_layout_(channel_layout)
+		, graph_(std::move(graph))
 		, output_(graph_, format_desc, channel_layout, index)
 		, image_mixer_(std::move(image_mixer))
 		, mixer_(index, graph_, image_mixer_)
@@ -167,6 +165,39 @@ public:
 		}
 	}
 
+	static bool at_least_one_consumer_needs_readback(
+			const std::vector<spl::shared_ptr<const frame_consumer>> consumers, hardware_frame_type frame_type)
+	{
+		if (consumers.empty())
+			return true;
+
+		for (auto& consumer : consumers)
+		{
+			if (consumer->hardware_frame_support() == hardware_frame_type::no_video_processing)
+				continue;
+
+			if (consumer->hardware_frame_support() != frame_type && consumer->hardware_frame_support() != hardware_frame_type::any)
+				return true;
+		}
+
+		return false;
+	}
+
+	static bool at_least_one_consumer_supports_hardware_frame(
+			const std::vector<spl::shared_ptr<const frame_consumer>> consumers, hardware_frame_type frame_type)
+	{
+		for (auto& consumer : consumers)
+		{
+			if (consumer->hardware_frame_support() == hardware_frame_type::no_video_processing)
+				continue;
+
+			if (consumer->hardware_frame_support() == frame_type || consumer->hardware_frame_support() == hardware_frame_type::any)
+				return true;
+		}
+
+		return false;
+	}
+
 	void tick()
 	{
 		try
@@ -184,7 +215,18 @@ public:
 
 			// Mix
 
-			auto mixed_frame  = mixer_(std::move(stage_frames), format_desc, channel_layout);
+			bool readback						= true;
+			bool attach_hardware_frame			= false;
+			auto hardware_frame_type_offered	= mixer_.get_hardware_frame_type();
+
+			if (hardware_frame_type_offered != hardware_frame_type::only_in_system_memory)
+			{
+				auto consumers					= output_.get_consumers();
+				readback						= at_least_one_consumer_needs_readback(consumers, hardware_frame_type_offered);
+				attach_hardware_frame			= at_least_one_consumer_supports_hardware_frame(consumers, hardware_frame_type_offered);
+			}
+
+			auto mixed_frame	= mixer_(std::move(stage_frames), format_desc, channel_layout, readback, attach_hardware_frame);
 
 			// Consume
 
@@ -271,7 +313,8 @@ video_channel::video_channel(
 		int index,
 		const core::video_format_desc& format_desc,
 		const core::audio_channel_layout& channel_layout,
-		std::unique_ptr<image_mixer> image_mixer) : impl_(new impl(index, format_desc, channel_layout, std::move(image_mixer))){}
+		spl::shared_ptr<caspar::diagnostics::graph> graph,
+		std::unique_ptr<image_mixer> image_mixer) : impl_(new impl(index, format_desc, channel_layout, std::move(graph), std::move(image_mixer))){}
 video_channel::~video_channel(){}
 const stage& video_channel::stage() const { return impl_->stage_;}
 stage& video_channel::stage() { return impl_->stage_;}

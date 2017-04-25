@@ -32,12 +32,14 @@
 #include <core/frame/frame_factory.h>
 #include <core/frame/frame.h>
 
+#include <boost/any.hpp>
+
 #include <cstdint>
 
 FORWARD2(caspar, core, struct pixel_format_desc);
 
 namespace caspar { namespace core {
-	
+
 // Interface
 class image_mixer : public frame_visitor
 				  , public frame_factory
@@ -52,18 +54,21 @@ public:
 
 	image_mixer(){}
 	virtual ~image_mixer(){}
-	
+
 	// Methods
 
 	virtual void push(const struct frame_transform& frame) = 0;
 	virtual void visit(const class const_frame& frame) = 0;
 	virtual void pop() = 0;
-		
-	virtual std::future<array<const std::uint8_t>> operator()(const struct video_format_desc& format_desc, bool straighten_alpha) = 0;
+
+	virtual std::shared_future<boost::any> render_hardware_frame(const struct video_format_desc& format_desc, bool straighten_alpha) = 0;
+	virtual std::shared_future<array<const std::uint8_t>> readback(const std::shared_future<boost::any>& hardware_frame, const struct video_format_desc& format_desc) = 0;
 
 	virtual class mutable_frame create_frame(const void* tag, const struct pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) = 0;
 
 	// Properties
+
+	virtual enum class hardware_frame_type get_hardware_frame_type() const = 0;
 };
 
 }}

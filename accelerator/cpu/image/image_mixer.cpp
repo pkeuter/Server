@@ -151,7 +151,7 @@ class image_renderer
 	tbb::concurrent_bounded_queue<spl::shared_ptr<buffer>>												temp_buffers_;
 	core::video_format_desc																				format_desc_;
 public:
-	std::future<array<const std::uint8_t>> operator()(std::vector<item> items, const core::video_format_desc& format_desc)
+	array<const std::uint8_t> operator()(std::vector<item> items, const core::video_format_desc& format_desc)
 	{
 		if (format_desc != format_desc_)
 		{
@@ -174,7 +174,7 @@ public:
 
 		temp_buffers_.clear();
 
-		return make_ready_future(array<const std::uint8_t>(result->data(), format_desc.size, true, result));
+		return array<const std::uint8_t>(result->data(), format_desc.size, true, result);
 	}
 
 private:
@@ -334,9 +334,9 @@ public:
 		transform_stack_.pop_back();
 	}
 
-	std::future<array<const std::uint8_t>> render(const core::video_format_desc& format_desc)
+	std::shared_future<boost::any> render(const core::video_format_desc& format_desc)
 	{
-		return renderer_(std::move(items_), format_desc);
+		return make_ready_future<boost::any>(renderer_(std::move(items_), format_desc));
 	}
 
 	core::mutable_frame create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout)
@@ -357,7 +357,9 @@ void image_mixer::push(const core::frame_transform& transform){impl_->push(trans
 void image_mixer::visit(const core::const_frame& frame){impl_->visit(frame);}
 void image_mixer::pop(){impl_->pop();}
 int image_mixer::get_max_frame_size() { return std::numeric_limits<int>::max(); }
-std::future<array<const std::uint8_t>> image_mixer::operator()(const core::video_format_desc& format_desc, bool /* straighten_alpha */){return impl_->render(format_desc);}
+core::hardware_frame_type image_mixer::get_hardware_frame_type() const { return core::hardware_frame_type::only_in_system_memory; }
+std::shared_future<boost::any> image_mixer::render_hardware_frame(const core::video_format_desc& format_desc, bool /* straighten_alpha */) { return impl_->render(format_desc); }
+std::shared_future<array<const std::uint8_t>> image_mixer::readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc) { return boost::any_cast<std::shared_future<array<const std::uint8_t>>>(hardware_frame.get()); }
 core::mutable_frame image_mixer::create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) {return impl_->create_frame(tag, desc, channel_layout);}
 
 }}}

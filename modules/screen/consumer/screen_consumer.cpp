@@ -38,6 +38,8 @@
 #include <common/os/general_protection_fault.h>
 #include <common/scope_exit.h>
 
+#include <accelerator/ogl/util/texture.h>
+
 //#include <windows.h>
 
 #include <ffmpeg/producer/filter/filter.h>
@@ -438,13 +440,26 @@ public:
 
 	void render_and_draw_frame(core::const_frame input_frame)
 	{
+		perf_timer_.restart();
+
+		if (filter_.filter_str().empty() && !input_frame.hardware_image_data().empty())
+		{ // No readback required.
+			auto texture = boost::any_cast<spl::shared_ptr<accelerator::ogl::texture>>(input_frame.hardware_image_data());
+
+			render(texture);
+			graph_->set_value("frame-time", perf_timer_.elapsed() * format_desc_.fps * 0.5);
+
+			wait_for_vblank_and_display(); // progressive frame
+
+			return;
+		}
+
 		if(static_cast<size_t>(input_frame.image_data().size()) != format_desc_.size)
 			return;
 
 		if(screen_width_ == 0 && screen_height_ == 0)
 			return;
 
-		perf_timer_.restart();
 		auto av_frame = get_av_frame();
 		av_frame->data[0] = const_cast<uint8_t*>(input_frame.image_data().begin());
 
@@ -523,6 +538,22 @@ public:
 		std::rotate(pbos_.begin(), pbos_.begin() + 1, pbos_.end());
 	}
 
+	void render(spl::shared_ptr<accelerator::ogl::texture> texture)
+	{
+		CASPAR_LOG_CALL(trace) << "screen_consumer::render() <- " << print();
+
+		texture->bind(0);
+
+		GL(glClear(GL_COLOR_BUFFER_BIT));
+		glBegin(GL_QUADS);
+		glTexCoord2f(0.0f, 1.0f);	glVertex2f(-width_, -height_);
+		glTexCoord2f(1.0f, 1.0f);	glVertex2f(width_, -height_);
+		glTexCoord2f(1.0f, 0.0f);	glVertex2f(width_, height_);
+		glTexCoord2f(0.0f, 0.0f);	glVertex2f(-width_, height_);
+		glEnd();
+
+		texture->unbind();
+	}
 
 	std::future<bool> send(core::const_frame frame)
 	{
@@ -641,6 +672,11 @@ public:
 	std::wstring name() const override
 	{
 		return L"screen";
+	}
+
+	core::hardware_frame_type hardware_frame_support() const override
+	{
+		return core::hardware_frame_type::any;
 	}
 
 	boost::property_tree::wptree info() const override

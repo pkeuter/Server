@@ -70,6 +70,7 @@ public:
 	virtual int								buffer_depth() const = 0; // -1 to not participate in frame presentation synchronization
 	virtual int								index() const = 0;
 	virtual int64_t							presentation_frame_age_millis() const = 0;
+	virtual hardware_frame_type				hardware_frame_support() const;
 	virtual const frame_consumer*			unwrapped() const { return this; }
 };
 

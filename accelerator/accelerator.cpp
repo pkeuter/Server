@@ -15,7 +15,7 @@
 #include <tbb/mutex.h>
 
 namespace caspar { namespace accelerator {
-	
+
 struct accelerator::impl
 {
 	const std::wstring				path_;
@@ -27,7 +27,8 @@ struct accelerator::impl
 	{
 	}
 
-	std::unique_ptr<core::image_mixer> create_image_mixer(int channel_id)
+	std::unique_ptr<core::image_mixer> create_image_mixer(
+			const spl::shared_ptr<diagnostics::graph>& graph, int channel_id)
 	{
 		try
 		{
@@ -39,6 +40,7 @@ struct accelerator::impl
 					ogl_device_.reset(new ogl::device());
 
 				return std::unique_ptr<core::image_mixer>(new ogl::image_mixer(
+						graph,
 						spl::make_shared_ptr(ogl_device_),
 						env::properties().get(L"configuration.mixer.blend-modes", false),
 						env::properties().get(L"configuration.mixer.straight-alpha", false),
@@ -67,9 +69,10 @@ accelerator::~accelerator()
 {
 }
 
-std::unique_ptr<core::image_mixer> accelerator::create_image_mixer(int channel_id)
+std::unique_ptr<core::image_mixer> accelerator::create_image_mixer(
+		const spl::shared_ptr<diagnostics::graph>& graph, int channel_id)
 {
-	return impl_->create_image_mixer(channel_id);
+	return impl_->create_image_mixer(graph, channel_id);
 }
 
 std::shared_ptr<ogl::device> accelerator::get_ogl_device() const

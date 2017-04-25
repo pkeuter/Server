@@ -136,6 +136,7 @@ public:
 	int64_t presentation_frame_age_millis() const override																			{return consumer_->presentation_frame_age_millis();}
 	monitor::subject& monitor_output() override																						{return consumer_->monitor_output();}
 	const frame_consumer* unwrapped() const override																				{return consumer_->unwrapped();}
+	hardware_frame_type hardware_frame_support() const override																		{return consumer_->hardware_frame_support();}
 };
 
 class print_consumer_proxy : public frame_consumer
@@ -170,6 +171,7 @@ public:
 	int64_t presentation_frame_age_millis() const override																			{return consumer_->presentation_frame_age_millis();}
 	monitor::subject& monitor_output() override																						{return consumer_->monitor_output();}
 	const frame_consumer* unwrapped() const override																				{return consumer_->unwrapped();}
+	hardware_frame_type hardware_frame_support() const override																		{return consumer_->hardware_frame_support();}
 };
 
 class recover_consumer_proxy : public frame_consumer
@@ -224,6 +226,7 @@ public:
 	int64_t presentation_frame_age_millis() const override					{return consumer_->presentation_frame_age_millis();}
 	monitor::subject& monitor_output() override								{return consumer_->monitor_output();}
 	const frame_consumer* unwrapped() const override						{return consumer_->unwrapped();}
+	hardware_frame_type hardware_frame_support() const override				{return consumer_->hardware_frame_support();}
 };
 
 // This class is used to guarantee that audio cadence is correct. This is important for NTSC audio.
@@ -279,6 +282,7 @@ public:
 	int64_t presentation_frame_age_millis() const override					{return consumer_->presentation_frame_age_millis();}
 	monitor::subject& monitor_output() override								{return consumer_->monitor_output();}
 	const frame_consumer* unwrapped() const override						{return consumer_->unwrapped();}
+	hardware_frame_type hardware_frame_support() const override				{return consumer_->hardware_frame_support();}
 };
 
 spl::shared_ptr<core::frame_consumer> frame_consumer_registry::create_consumer(
@@ -355,6 +359,11 @@ const spl::shared_ptr<frame_consumer>& frame_consumer::empty()
 	};
 	static spl::shared_ptr<frame_consumer> consumer = spl::make_shared<empty_frame_consumer>();
 	return consumer;
+}
+
+hardware_frame_type frame_consumer::hardware_frame_support() const
+{
+	return hardware_frame_type::only_in_system_memory;
 }
 
 }}

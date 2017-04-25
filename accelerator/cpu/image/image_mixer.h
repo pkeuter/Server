@@ -12,7 +12,7 @@
 #include <core/video_format.h>
 
 namespace caspar { namespace accelerator { namespace cpu {
-	
+
 typedef cache_aligned_vector<uint8_t> buffer;
 
 class image_mixer final : public core::image_mixer
@@ -26,18 +26,20 @@ public:
 	image_mixer(int channel_id);
 	~image_mixer();
 
-	// Methods	
+	// Methods
 
 	virtual void push(const core::frame_transform& frame);
 	virtual void visit(const core::const_frame& frame);
 	virtual void pop();
-		
-	std::future<array<const std::uint8_t>> operator()(const core::video_format_desc& format_desc, bool straighten_alpha) override;
-		
+
+	std::shared_future<boost::any> render_hardware_frame(const core::video_format_desc& format_desc, bool straighten_alpha) override;
+	std::shared_future<array<const std::uint8_t>> readback(const std::shared_future<boost::any>& hardware_frame, const core::video_format_desc& format_desc) override;
+
 	core::mutable_frame create_frame(const void* tag, const core::pixel_format_desc& desc, const core::audio_channel_layout& channel_layout) override;
 
 	// Properties
 	int get_max_frame_size() override;
+	core::hardware_frame_type get_hardware_frame_type() const override;
 private:
 	struct impl;
 	spl::unique_ptr<impl> impl_;

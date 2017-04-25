@@ -176,7 +176,7 @@ public:
 
 			for(std::size_t n = 0; n < buffers_.size(); ++n)
 			{
-				audio_buffer_16 audio(format_desc_.audio_cadence[n % format_desc_.audio_cadence.size()] * 2, 0);
+				audio_buffer_16 audio(format_desc_.audio_cadence[n % format_desc_.audio_cadence.size()]*2, 0);
 				alBufferData(buffers_[n], AL_FORMAT_STEREO16, audio.data(), static_cast<ALsizei>(audio.size()*sizeof(int16_t)), format_desc_.audio_sample_rate);
 				alSourceQueueBuffers(source_, 1, &buffers_[n]);
 			}
@@ -257,6 +257,11 @@ public:
 	bool has_synchronization_clock() const override
 	{
 		return false;
+	}
+
+	core::hardware_frame_type hardware_frame_support() const override
+	{
+		return core::hardware_frame_type::no_video_processing;
 	}
 
 	int latency_millis() const

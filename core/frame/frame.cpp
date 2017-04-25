@@ -108,6 +108,7 @@ const const_frame& const_frame::empty()
 struct const_frame::impl : boost::noncopyable
 {
 	mutable std::vector<std::shared_future<array<const std::uint8_t>>>	future_buffers_;
+	std::shared_future<boost::any>										hardware_image_;
 	mutable core::audio_buffer											audio_data_;
 	const core::pixel_format_desc										desc_;
 	const core::audio_channel_layout									channel_layout_;
@@ -131,6 +132,7 @@ struct const_frame::impl : boost::noncopyable
 
 	impl(const impl& other)
 		: future_buffers_(other.future_buffers_)
+		, hardware_image_(other.hardware_image_)
 		, audio_data_(other.audio_data_)
 		, desc_(other.desc_)
 		, channel_layout_(other.channel_layout_)
@@ -145,12 +147,14 @@ struct const_frame::impl : boost::noncopyable
 
 	impl(
 			std::shared_future<array<const std::uint8_t>> image,
+			std::shared_future<boost::any> hardware_image,
 			audio_buffer audio_data,
 			const void* tag,
 			const core::pixel_format_desc& desc,
 			const core::audio_channel_layout& channel_layout,
 			caspar::timer since_created_timer = caspar::timer())
-		: audio_data_(std::move(audio_data))
+		: hardware_image_(std::move(hardware_image))
+		, audio_data_(std::move(audio_data))
 		, desc_(desc)
 		, channel_layout_(channel_layout)
 		, tag_(tag)
@@ -161,7 +165,7 @@ struct const_frame::impl : boost::noncopyable
 		if (desc.format != core::pixel_format::bgra)
 			CASPAR_THROW_EXCEPTION(not_implemented());
 
-		future_buffers_.push_back(image);
+		future_buffers_.push_back(std::move(image));
 
 		key_only_on_demand_ = std::async(std::launch::deferred, [image]
 		{
@@ -200,9 +204,17 @@ struct const_frame::impl : boost::noncopyable
 		return tag_ != empty().stream_tag() ? future_buffers_.at(index).get() : array<const std::uint8_t>(nullptr, 0, true, 0);
 	}
 
+	boost::any hardware_image_data() const
+	{
+		if (hardware_image_.valid())
+			return hardware_image_.get();
+		else
+			return boost::any();
+	}
+
 	spl::shared_ptr<impl> key_only() const
 	{
-		return spl::make_shared<impl>(key_only_on_demand_, audio_data_, tag_, desc_, channel_layout_, since_created_timer_);
+		return spl::make_shared<impl>(key_only_on_demand_, hardware_image_, audio_data_, tag_, desc_, channel_layout_, since_created_timer_);
 	}
 
 	std::size_t width() const
@@ -237,11 +249,12 @@ struct const_frame::impl : boost::noncopyable
 const_frame::const_frame(const void* tag) : impl_(new impl(tag)){}
 const_frame::const_frame(
 		std::shared_future<array<const std::uint8_t>> image,
+		std::shared_future<boost::any> hardware_image,
 		audio_buffer audio_data,
 		const void* tag,
 		const core::pixel_format_desc& desc,
 		const core::audio_channel_layout& channel_layout)
-	: impl_(new impl(std::move(image), std::move(audio_data), tag, desc, channel_layout)){}
+	: impl_(new impl(std::move(image), std::move(hardware_image), std::move(audio_data), tag, desc, channel_layout)){}
 const_frame::const_frame(mutable_frame&& other) : impl_(new impl(std::move(other))){}
 const_frame::~const_frame(){}
 const_frame::const_frame(const_frame&& other) : impl_(std::move(other.impl_)){}
@@ -264,6 +277,7 @@ bool const_frame::operator>(const const_frame& other){return impl_ > other.impl_
 const core::pixel_format_desc& const_frame::pixel_format_desc()const{return impl_->desc_;}
 const core::audio_channel_layout& const_frame::audio_channel_layout()const { return impl_->channel_layout_; }
 array<const std::uint8_t> const_frame::image_data(int index)const{return impl_->image_data(index);}
+boost::any const_frame::hardware_image_data() const { return impl_->hardware_image_data(); }
 const core::audio_buffer& const_frame::audio_data()const{return impl_->audio_data_;}
 std::size_t const_frame::width()const{return impl_->width();}
 std::size_t const_frame::height()const{return impl_->height();}

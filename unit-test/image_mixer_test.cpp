@@ -56,6 +56,7 @@ template <>
 spl::shared_ptr<core::image_mixer> create_mixer<accelerator::ogl::image_mixer>()
 {
 	return spl::make_shared<accelerator::ogl::image_mixer>(
+			spl::make_shared<diagnostics::graph>(),
 			ogl_device(),
 			false, // blend modes not wanted
 			false, // straight alpha not wanted
@@ -67,6 +68,7 @@ template <>
 spl::shared_ptr<core::image_mixer> create_mixer<dummy_ogl_with_blend_modes>()
 {
 	return spl::make_shared<accelerator::ogl::image_mixer>(
+			spl::make_shared<diagnostics::graph>(),
 			ogl_device(),
 			true,  // blend modes wanted
 			false, // straight alpha not wanted
@@ -146,7 +148,7 @@ public:
 		desc.height = height;
 		desc.size = width * height * 4;
 
-		return (*mixer)(desc, false).get();
+		return mixer->readback(mixer->render_hardware_frame(desc, false), desc).get();
 	}
 };
 
@@ -245,7 +247,7 @@ TYPED_TEST(MixerTestOgl, MakeGrayscaleWithSaturation)
 	frame.transform().image_transform.saturation = 0.0;
 	this->add_layer(frame);
 	auto result = this->get_result(1, 1);
-	
+
 	ASSERT_EQ(result.data()[0], result.data()[1]);
 	ASSERT_EQ(result.data()[1], result.data()[2]);
 }
