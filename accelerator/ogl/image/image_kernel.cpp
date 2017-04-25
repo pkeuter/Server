@@ -41,6 +41,7 @@
 #include <boost/algorithm/cxx11/all_of.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/range/adaptor/transformed.hpp>
+#include <boost/numeric/ublas/io.hpp>
 
 #include <cmath>
 
@@ -163,14 +164,6 @@ struct image_kernel::impl
 		if (coords.empty())
 			return;
 
-		// Calculate transforms
-		auto f_p = params.transform.fill_translation;
-		auto f_s = params.transform.fill_scale;
-
-		bool is_default_geometry = boost::equal(coords, core::frame_geometry::get_default().data());
-		auto aspect = params.aspect_ratio;
-		auto angle = params.transform.angle;
-		auto anchor = params.transform.anchor;
 		auto crop = params.transform.crop;
 		auto pers = params.transform.perspective;
 		pers.ur[0] -= 1.0;
@@ -179,51 +172,14 @@ struct image_kernel::impl
 		pers.ll[1] -= 1.0;
 		std::vector<boost::array<double, 2>> pers_corners = { pers.ul, pers.ur, pers.lr, pers.ll };
 
-		auto do_crop = [&](core::frame_geometry::coord& coord)
-		{
-			if (!is_default_geometry)
-				// TODO implement support for non-default geometry.
-				return;
-
-			coord.vertex_x = std::max(coord.vertex_x, crop.ul[0]);
-			coord.vertex_x = std::min(coord.vertex_x, crop.lr[0]);
-			coord.vertex_y = std::max(coord.vertex_y, crop.ul[1]);
-			coord.vertex_y = std::min(coord.vertex_y, crop.lr[1]);
-			coord.texture_x = std::max(coord.texture_x, crop.ul[0]);
-			coord.texture_x = std::min(coord.texture_x, crop.lr[0]);
-			coord.texture_y = std::max(coord.texture_y, crop.ul[1]);
-			coord.texture_y = std::min(coord.texture_y, crop.lr[1]);
-		};
-		auto do_perspective = [=](core::frame_geometry::coord& coord, const boost::array<double, 2>& pers_corner)
-		{
-			if (!is_default_geometry)
-				// TODO implement support for non-default geometry.
-				return;
-
-			coord.vertex_x += pers_corner[0];
-			coord.vertex_y += pers_corner[1];
-		};
-		auto rotate = [&](core::frame_geometry::coord& coord)
-		{
-			auto orig_x = (coord.vertex_x - anchor[0]) * f_s[0];
-			auto orig_y = (coord.vertex_y - anchor[1]) * f_s[1] / aspect;
-			coord.vertex_x = orig_x * std::cos(angle) - orig_y * std::sin(angle);
-			coord.vertex_y = orig_x * std::sin(angle) + orig_y * std::cos(angle);
-			coord.vertex_y *= aspect;
-		};
-		auto move = [&](core::frame_geometry::coord& coord)
-		{
-			coord.vertex_x += f_p[0];
-			coord.vertex_y += f_p[1];
-		};
-
 		int corner = 0;
 		for (auto& coord : coords)
 		{
-			do_crop(coord);
-			do_perspective(coord, pers_corners.at(corner));
-			rotate(coord);
-			move(coord);
+			auto vector = coord.get_vertex_vector();
+			auto matrix = params.transform_matrix;
+			auto multiplied = vector * matrix;
+
+			coord.set_vertex_coord(multiplied);
 
 			if (++corner == 4)
 				corner = 0;
@@ -376,44 +332,6 @@ struct image_kernel::impl
 
 		// Set render target
 		params.background->attach();
-
-		// Perspective correction
-		double diagonal_intersection_x;
-		double diagonal_intersection_y;
-
-		if (get_line_intersection(
-				pers.ul[0] + crop.ul[0], pers.ul[1] + crop.ul[1],
-				pers.lr[0] + crop.lr[0], pers.lr[1] + crop.lr[1],
-				pers.ur[0] + crop.lr[0], pers.ur[1] + crop.ul[1],
-				pers.ll[0] + crop.ul[0], pers.ll[1] + crop.lr[1],
-				diagonal_intersection_x,
-				diagonal_intersection_y) &&
-			is_default_geometry)
-		{
-			// http://www.reedbeta.com/blog/2012/05/26/quadrilateral-interpolation-part-1/
-			auto d0 = hypotenuse(pers.ll[0] + crop.ul[0], pers.ll[1] + crop.lr[1], diagonal_intersection_x, diagonal_intersection_y);
-			auto d1 = hypotenuse(pers.lr[0] + crop.lr[0], pers.lr[1] + crop.lr[1], diagonal_intersection_x, diagonal_intersection_y);
-			auto d2 = hypotenuse(pers.ur[0] + crop.lr[0], pers.ur[1] + crop.ul[1], diagonal_intersection_x, diagonal_intersection_y);
-			auto d3 = hypotenuse(pers.ul[0] + crop.ul[0], pers.ul[1] + crop.ul[1], diagonal_intersection_x, diagonal_intersection_y);
-
-			auto ulq = calc_q(d3, d1);
-			auto urq = calc_q(d2, d0);
-			auto lrq = calc_q(d1, d3);
-			auto llq = calc_q(d0, d2);
-
-			std::vector<double> q_values = { ulq, urq, lrq, llq };
-
-			corner = 0;
-			for (auto& coord : coords)
-			{
-				coord.texture_q = q_values[corner];
-				coord.texture_x *= q_values[corner];
-				coord.texture_y *= q_values[corner];
-
-				if (++corner == 4)
-					corner = 0;
-			}
-		}
 
 		// Draw
 		switch(params.geometry.type())

@@ -26,6 +26,9 @@
 
 #include <core/video_format.h>
 #include <core/mixer/image/blend_modes.h>
+#include <boost/numeric/ublas/matrix.hpp>
+#include <boost/numeric/ublas/matrix_vector.hpp>
+#include <boost/numeric/ublas/vector.hpp>
 
 #include <boost/array.hpp>
 #include <boost/optional.hpp>
@@ -76,6 +79,8 @@ struct rectangle final
 	boost::array<double, 2> lr = boost::array<double, 2> { { 1.0, 1.0 } };
 };
 
+typedef boost::numeric::ublas::matrix<double, boost::numeric::ublas::row_major, std::vector<double>> t_matrix;
+
 struct image_transform final
 {
 	double					opacity				= 1.0;
@@ -103,11 +108,16 @@ struct image_transform final
 	bool					use_mipmap			= false;
 	core::blend_mode		blend_mode			= core::blend_mode::normal;
 	int						layer_depth			= 0;
+	//double					aspect_ratio		= 1.0;
 
 	image_transform& operator*=(const image_transform &other);
 	image_transform operator*(const image_transform &other) const;
 
+	t_matrix get_transform_matrix() const;
+
 	static image_transform tween(double time, const image_transform& source, const image_transform& dest, double duration, const tweener& tween);
+private:
+	t_matrix transform_matrix = boost::numeric::ublas::identity_matrix<double>(3, 3);
 };
 
 bool operator==(const image_transform& lhs, const image_transform& rhs);
@@ -146,6 +156,21 @@ public:
 
 bool operator==(const frame_transform& lhs, const frame_transform& rhs);
 bool operator!=(const frame_transform& lhs, const frame_transform& rhs);
+
+t_matrix get_transform_matrix(const image_transform& transform);
+
+t_matrix create_matrix(std::vector<std::vector<double>> data);
+
+template<typename RandomAccessRange>
+boost::numeric::ublas::vector<double, std::vector<double>> create_vector(RandomAccessRange array)
+{
+	boost::numeric::ublas::vector<double, std::vector<double>> vector(3);
+
+	for (int i = 0; i < 3; ++i)
+		vector(i) = array.size() > i ? array.at(i) : 1.0;
+
+	return vector;
+}
 
 class tweened_transform
 {
@@ -194,5 +219,35 @@ namespace detail {
 
 void set_current_aspect_ratio(double aspect_ratio);
 double get_current_aspect_ratio();
+
+}}}
+
+namespace boost { namespace numeric { namespace ublas {
+
+template<typename T, typename L, typename S>
+boost::numeric::ublas::matrix<T, L, S> operator*(const boost::numeric::ublas::matrix<T, L, S>& lhs, const boost::numeric::ublas::matrix<T, L, S>& rhs)
+{
+	return boost::numeric::ublas::matrix<T>(boost::numeric::ublas::prod(lhs, rhs));
+}
+
+template<typename T, typename L, typename S1, typename S2>
+boost::numeric::ublas::vector<T, S1> operator*(const boost::numeric::ublas::vector<T, S1>& lhs, const boost::numeric::ublas::matrix<T, L, S2>& rhs)
+{
+	return boost::numeric::ublas::vector<T, S1>(boost::numeric::ublas::prod(lhs, rhs));
+}
+
+template<typename T, typename L, typename S1, typename S2>
+bool operator==(const boost::numeric::ublas::matrix<T, L, S1>& lhs, const boost::numeric::ublas::matrix<T, L, S2>& rhs)
+{
+	if (lhs.size1() != rhs.size1() || lhs.size2() != rhs.size2())
+		return false;
+
+	for (int y = 0; y < lhs.size1(); ++y)
+		for (int x = 0; x < lhs.size2(); ++x)
+			if (lhs(y, x) != rhs(y, x))
+				return false;
+
+	return true;
+}
 
 }}}

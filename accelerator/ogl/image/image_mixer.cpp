@@ -56,6 +56,7 @@ struct item
 	core::pixel_format_desc		pix_desc	= core::pixel_format::invalid;
 	std::vector<future_texture>	textures;
 	core::image_transform		transform;
+	core::t_matrix				transform_matrix;
 	core::frame_geometry		geometry	= core::frame_geometry::get_default();
 };
 
@@ -206,10 +207,11 @@ private:
 			  const core::video_format_desc& format_desc)
 	{
 		draw_params draw_params;
-		draw_params.pix_desc		= std::move(item.pix_desc);
-		draw_params.transform		= std::move(item.transform);
-		draw_params.geometry		= item.geometry;
-		draw_params.aspect_ratio	= static_cast<double>(format_desc.square_width) / static_cast<double>(format_desc.square_height);
+		draw_params.pix_desc			= std::move(item.pix_desc);
+		draw_params.transform			= std::move(item.transform);
+		draw_params.transform_matrix	= std::move(item.transform_matrix);
+		draw_params.geometry			= std::move(item.geometry);
+		draw_params.aspect_ratio		= static_cast<double>(format_desc.square_width) / static_cast<double>(format_desc.square_height);
 
 		for (auto& future_texture : item.textures)
 			draw_params.textures.push_back(spl::make_shared_ptr(future_texture.get()));
@@ -272,6 +274,7 @@ struct image_mixer::impl : public core::frame_factory
 {
 	spl::shared_ptr<device>				ogl_;
 	image_renderer						renderer_;
+	std::vector<core::t_matrix>			matrix_transform_stack_;
 	std::vector<core::image_transform>	transform_stack_;
 	std::vector<layer>					layers_; // layer/stream/items
 	std::vector<layer*>					layer_stack_;
@@ -281,6 +284,7 @@ public:
 		, renderer_(ogl, blend_modes_wanted, straight_alpha_wanted)
 		, transform_stack_(1)
 	{
+		matrix_transform_stack_.push_back(boost::numeric::ublas::identity_matrix<double>(3, 3));
 		CASPAR_LOG(info) << L"Initialized OpenGL Accelerated GPU Image Mixer for channel " << channel_id;
 	}
 
@@ -288,6 +292,7 @@ public:
 	{
 		auto previous_layer_depth = transform_stack_.back().layer_depth;
 		transform_stack_.push_back(transform_stack_.back() * transform.image_transform);
+		matrix_transform_stack_.push_back(transform.image_transform.get_transform_matrix() * matrix_transform_stack_.back());
 		auto new_layer_depth = transform_stack_.back().layer_depth;
 
 		if (previous_layer_depth < new_layer_depth)
@@ -320,9 +325,10 @@ public:
 			return;
 
 		item item;
-		item.pix_desc	= frame.pixel_format_desc();
-		item.transform	= transform_stack_.back();
-		item.geometry	= frame.geometry();
+		item.pix_desc			= frame.pixel_format_desc();
+		item.transform			= transform_stack_.back();
+		item.transform_matrix	= matrix_transform_stack_.back();
+		item.geometry			= frame.geometry();
 
 		// NOTE: Once we have copied the arrays they are no longer valid for reading!!! Check for alternative solution e.g. transfer with AMD_pinned_memory.
 		for(int n = 0; n < static_cast<int>(item.pix_desc.planes.size()); ++n)
@@ -334,6 +340,7 @@ public:
 	void pop()
 	{
 		transform_stack_.pop_back();
+		matrix_transform_stack_.pop_back();
 		layer_stack_.resize(transform_stack_.back().layer_depth);
 	}
 

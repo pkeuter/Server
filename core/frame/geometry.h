@@ -23,6 +23,8 @@
 
 #include <common/memory.h>
 
+#include <boost/numeric/ublas/vector.hpp>
+
 #include <vector>
 
 namespace caspar { namespace core {
@@ -47,6 +49,9 @@ public:
 
 		coord() = default;
 		coord(double vertex_x, double vertex_y, double texture_x, double texture_y);
+
+		boost::numeric::ublas::vector<double, std::vector<double>> get_vertex_vector() const;
+		void set_vertex_coord(const boost::numeric::ublas::vector<double, std::vector<double>>& vector);
 
 		bool operator==(const coord& other) const;
 	};

@@ -60,7 +60,7 @@ struct frame_geometry::impl
 
 		data_ = std::move(data);
 	}
-	
+
 	frame_geometry::geometry_type	type_;
 	std::vector<coord>				data_;
 };
@@ -72,7 +72,7 @@ const std::vector<frame_geometry::coord>& frame_geometry::data() const
 {
 	return impl_->data_;
 }
-	
+
 const frame_geometry& frame_geometry::get_default()
 {
 	static std::vector<frame_geometry::coord> data = {
@@ -85,6 +85,23 @@ const frame_geometry& frame_geometry::get_default()
 	static const frame_geometry g(frame_geometry::geometry_type::quad, data);
 
 	return g;
+}
+
+boost::numeric::ublas::vector<double, std::vector<double>> frame_geometry::coord::get_vertex_vector() const
+{
+	boost::numeric::ublas::vector<double, std::vector<double>> result(3);
+
+	result(0) = vertex_x;
+	result(1) = vertex_y;
+	result(2) = 1;
+
+	return result;
+}
+
+void frame_geometry::coord::set_vertex_coord(const boost::numeric::ublas::vector<double, std::vector<double>>& vector)
+{
+	vertex_x = vector(0);
+	vertex_y = vector(1);
 }
 
 }}

@@ -25,6 +25,9 @@
 
 #include <boost/range/algorithm/equal.hpp>
 #include <boost/thread.hpp>
+#include <boost/numeric/ublas/io.hpp>
+
+#include <cmath>
 
 namespace caspar { namespace core {
 
@@ -51,6 +54,79 @@ void transform_corners(corners& self, const corners& other)
 	// TODO: figure out the math to compose perspective transforms correctly.
 }
 
+t_matrix create_matrix(std::vector<std::vector<double>> data)
+{
+	if (data.empty())
+		CASPAR_THROW_EXCEPTION(invalid_argument() << msg_info(L"data cannot be empty"));
+
+	t_matrix matrix(data.size(), data.at(0).size());
+
+	for (int y = 0; y < matrix.size1(); ++y)
+	{
+		if (data.at(y).size() != matrix.size2())
+			CASPAR_THROW_EXCEPTION(invalid_argument() << msg_info(L"Each row must be of the same length"));
+
+		for (int x = 0; x < matrix.size2(); ++x)
+			matrix(x, y) = data.at(y).at(x);
+	}
+
+	return matrix;
+}
+
+t_matrix get_transform_matrix(const image_transform& transform)
+{
+	auto aspect_ratio = detail::get_current_aspect_ratio();
+
+	using namespace boost::numeric::ublas;
+
+	auto anchor_matrix = create_matrix(
+	{
+		{ 1.0,	0.0,	-transform.anchor[0] },
+		{ 0.0,	1.0,	-transform.anchor[1] },
+		{ 0.0,	0.0,	1.0 }
+	});
+	auto scale_matrix = create_matrix(
+	{
+		{ transform.fill_scale[0],	0.0,						0.0 },
+		{ 0.0,						transform.fill_scale[1],	0.0 },
+		{ 0.0,						0.0,						1.0 }
+	});
+	auto aspect_matrix = create_matrix(
+	{
+		{ 1.0,	0.0,				0.0 },
+		{ 0.0,	1.0 / aspect_ratio,	0.0 },
+		{ 0.0,	0.0,				1.0 }
+	});
+
+	auto aspect_inv_matrix = create_matrix(
+	{
+		{ 1.0,	0.0,			0.0 },
+		{ 0.0,	aspect_ratio,	0.0 },
+		{ 0.0,	0.0,			1.0 }
+	});
+	auto rotation_matrix = create_matrix(
+	{
+		{ std::cos(transform.angle),	-std::sin(transform.angle),	0.0 },
+		{ std::sin(transform.angle),	std::cos(transform.angle),	0.0 },
+		{ 0.0,							0.0,						1.0 }
+	});
+	auto translation_matrix = create_matrix(
+	{
+		{ 1.0,	0.0,	transform.fill_translation[0] },
+		{ 0.0,	1.0,	transform.fill_translation[1] },
+		{ 0.0,	0.0,	1.0 }
+	});
+
+	auto result = anchor_matrix * aspect_matrix * scale_matrix * rotation_matrix * aspect_inv_matrix * translation_matrix;
+
+	return result;
+}
+
+t_matrix image_transform::get_transform_matrix() const
+{
+	return core::get_transform_matrix(*this);
+}
+
 image_transform& image_transform::operator*=(const image_transform &other)
 {
 	opacity					*= other.opacity;
@@ -58,30 +134,10 @@ image_transform& image_transform::operator*=(const image_transform &other)
 	contrast				*= other.contrast;
 	saturation				*= other.saturation;
 
-	// TODO: can this be done in any way without knowing the aspect ratio of the
-	// actual video mode? Thread local to the rescue
-	auto aspect_ratio		 = detail::get_current_aspect_ratio();
-	aspect_ratio			*= fill_scale[0] / fill_scale[1];
-
-	boost::array<double, 2> rotated;
-
-	auto orig_x				 = other.fill_translation[0];
-	auto orig_y				 = other.fill_translation[1] / aspect_ratio;
-	rotated[0]				 = orig_x * std::cos(angle) - orig_y * std::sin(angle);
-	rotated[1]				 = orig_x * std::sin(angle) + orig_y * std::cos(angle);
-	rotated[1]				*= aspect_ratio;
-
-	anchor[0]				+= other.anchor[0] * fill_scale[0];
-	anchor[1]				+= other.anchor[1] * fill_scale[1];
-	fill_translation[0]		+= rotated[0] * fill_scale[0];
-	fill_translation[1]		+= rotated[1] * fill_scale[1];
-	fill_scale[0]			*= other.fill_scale[0];
-	fill_scale[1]			*= other.fill_scale[1];
 	clip_translation[0]		+= other.clip_translation[0] * clip_scale[0];
 	clip_translation[1]		+= other.clip_translation[1] * clip_scale[1];
 	clip_scale[0]			*= other.clip_scale[0];
 	clip_scale[1]			*= other.clip_scale[1];
-	angle					+= other.angle;
 
 	transform_rect(crop, other.crop);
 	transform_corners(perspective, other.perspective);

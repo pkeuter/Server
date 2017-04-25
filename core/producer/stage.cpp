@@ -133,15 +133,14 @@ public:
 			});
 		}
 
-		auto frame1 = frame;
+		auto frame1 = core::draw_frame::push(frame);
 
-		frame1.transform() *= tween.fetch_and_tick(1);
+		frame1.transform() = tween.fetch_and_tick(1);
 
 		if(format_desc.field_mode != core::field_mode::progressive)
 		{
-			auto frame2 = frame;
-			frame2.transform() *= tween.fetch_and_tick(1);
-			frame2.transform().audio_transform.volume = 0.0;
+			auto frame2 = core::draw_frame::push(frame);
+			frame2.transform() = tween.fetch_and_tick(1);
 			frame1 = core::draw_frame::interlace(frame1, frame2, format_desc.field_mode);
 		}
 
