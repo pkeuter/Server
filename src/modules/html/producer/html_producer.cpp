@@ -28,6 +28,7 @@
 #include <core/frame/frame_factory.h>
 #include <core/frame/geometry.h>
 #include <core/frame/pixel_format.h>
+#include <core/frame/frame_transform.h>
 #include <core/monitor/monitor.h>
 #include <core/producer/frame_producer.h>
 
@@ -63,6 +64,10 @@
 
 #include "../html.h"
 
+#ifdef WIN32
+#include "dx11.h"
+#endif
+
 #pragma comment(lib, "libcef.lib")
 #pragma comment(lib, "libcef_dll_wrapper.lib")
 
@@ -83,6 +88,7 @@ class html_client
 
     spl::shared_ptr<core::frame_factory> frame_factory_;
     core::video_format_desc              format_desc_;
+    bool                                 shared_texture_enable_;
     tbb::concurrent_queue<std::wstring>  javascript_before_load_;
     std::atomic<bool>                    loaded_;
     std::queue<core::draw_frame>         frames_;
@@ -93,17 +99,28 @@ class html_client
 
     CefRefPtr<CefBrowser> browser_;
 
+#ifdef WIN32
+    std::shared_ptr<dx11_device> const dx11_device_;
+    std::shared_ptr<dx11_texture2d>    shared_buffer_;
+    std::shared_ptr<dx11_texture2d>    stage_surface_;
+#endif
+
     executor executor_;
 
   public:
     html_client(spl::shared_ptr<core::frame_factory>       frame_factory,
                 const spl::shared_ptr<diagnostics::graph>& graph,
                 core::video_format_desc                    format_desc,
+                bool                                       shared_texture_enable,
                 std::wstring                               url)
         : url_(std::move(url))
         , graph_(graph)
         , frame_factory_(std::move(frame_factory))
         , format_desc_(std::move(format_desc))
+        , shared_texture_enable_(shared_texture_enable)
+#ifdef WIN32
+        , dx11_device_(dx11_device::get_device())
+#endif
         , executor_(L"html_producer")
     {
         graph_->set_color("browser-tick-time", diagnostics::color(0.1f, 1.0f, 0.1f));
@@ -181,12 +198,11 @@ class html_client
     }
 
   private:
-    bool GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override
+    void GetViewRect(CefRefPtr<CefBrowser> browser, CefRect& rect) override
     {
         CASPAR_ASSERT(CefCurrentlyOn(TID_UI));
 
         rect = CefRect(0, 0, format_desc_.square_width, format_desc_.square_height);
-        return true;
     }
 
     void OnPaint(CefRefPtr<CefBrowser> browser,
@@ -196,6 +212,9 @@ class html_client
                  int                   width,
                  int                   height) override
     {
+        if (shared_texture_enable_)
+            return;
+
         graph_->set_value("browser-tick-time", paint_timer_.elapsed() * format_desc_.fps * 0.5);
         paint_timer_.restart();
         CASPAR_ASSERT(CefCurrentlyOn(TID_UI));
@@ -223,6 +242,108 @@ class html_client
         }
     }
 
+#ifdef WIN32
+    void OnAcceleratedPaint(CefRefPtr<CefBrowser> browser,
+                            PaintElementType      type,
+                            const RectList&       dirtyRects,
+                            void*                 shared_handle) override
+    {
+        try {
+            if (!shared_texture_enable_)
+                return;
+
+            graph_->set_value("browser-tick-time", paint_timer_.elapsed() * format_desc_.fps * 0.5);
+            paint_timer_.restart();
+            CASPAR_ASSERT(CefCurrentlyOn(TID_UI));
+
+            if (type != PET_VIEW)
+                return;
+
+            if (shared_buffer_) {
+                if (shared_handle != shared_buffer_->share_handle())
+                    shared_buffer_.reset();
+            }
+
+            if (!shared_buffer_) {
+                shared_buffer_ = dx11_device_->open_shared_texture(shared_handle);
+                if (!shared_buffer_)
+                    CASPAR_LOG(error) << print() << L" could not open shared texture!";
+            }
+
+            if (shared_buffer_) {
+                auto format = shared_buffer_->format();
+                // Oly support BGRA format
+                if (format == DXGI_FORMAT::DXGI_FORMAT_B8G8R8A8_UNORM) {
+                    uint32_t width  = shared_buffer_->width();
+                    uint32_t height = shared_buffer_->height();
+
+                    // Create a surface texture to copy and read data
+                    if (stage_surface_) {
+                        if (stage_surface_->width() != width || stage_surface_->height() != height)
+                            stage_surface_.reset();
+                    }
+
+                    if (!stage_surface_) {
+                        stage_surface_ = dx11_device_->create_texture(width, height, format);
+                    }
+
+                    if (stage_surface_) {
+                        // Copt shared texture to surface texture
+                        dx11_device_->copy_texture(stage_surface_->texture(), 0, 0, shared_buffer_, 0, 0, 0, 0);
+
+                        auto rowBytes = width * 4;
+
+                        // Mapping surface data to memory
+                        D3D11_MAPPED_SUBRESOURCE map;
+                        if (SUCCEEDED(dx11_device_->immedidate_context()->context()->Map(
+                                stage_surface_->texture(), 0, D3D11_MAP_READ, 0, &map)) &&
+                            map.RowPitch == rowBytes) {
+                            // Auto unmap when completed
+                            std::shared_ptr<void> pin_map(
+                                nullptr, [device = dx11_device_, tex = stage_surface_](void*) {
+                                    device->immedidate_context()->context()->Unmap(tex->texture(), 0);
+                                });
+
+                            // Create a frame
+                            core::pixel_format_desc pixel_desc;
+                            pixel_desc.format = core::pixel_format::bgra;
+                            pixel_desc.planes.push_back(core::pixel_format_desc::plane(width, height, 4));
+
+                            auto frame = frame_factory_->create_frame(this, pixel_desc);
+
+                            auto image_size = rowBytes * height;
+
+                            memcpy(frame.image_data(0).begin(), reinterpret_cast<uint8_t*>(map.pData), image_size);
+
+                            core::draw_frame dframe(std::move(frame));
+
+                            // Image need flip vertically
+                            // Top to bottom
+                            dframe.transform().image_transform.perspective.ul[1] = 1;
+                            dframe.transform().image_transform.perspective.ur[1] = 1;
+                            // Bottom to top
+                            dframe.transform().image_transform.perspective.ll[1] = 0;
+                            dframe.transform().image_transform.perspective.lr[1] = 0;
+
+                            {
+                                std::lock_guard<std::mutex> lock(frames_mutex_);
+
+                                frames_.push(dframe);
+                                while (frames_.size() > 8) {
+                                    frames_.pop();
+                                    graph_->set_tag(diagnostics::tag_severity::WARNING, "dropped-frame");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {
+            CASPAR_LOG_CURRENT_EXCEPTION();
+        }
+    }
+#endif
+
     void OnAfterCreated(CefRefPtr<CefBrowser> browser) override
     {
         CASPAR_ASSERT(CefCurrentlyOn(TID_UI));
@@ -245,11 +366,21 @@ class html_client
     }
 
     bool OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                          cef_log_severity_t    level,
                           const CefString&      message,
                           const CefString&      source,
                           int                   line) override
     {
-        CASPAR_LOG(info) << print() << L" Log: " << message.ToWString();
+        if (level == cef_log_severity_t::LOGSEVERITY_DEBUG)
+            CASPAR_LOG(debug) << print() << L" Log: " << message.ToWString();
+        else if (level == cef_log_severity_t::LOGSEVERITY_WARNING)
+            CASPAR_LOG(warning) << print() << L" Log: " << message.ToWString();
+        else if (level == cef_log_severity_t::LOGSEVERITY_ERROR)
+            CASPAR_LOG(error) << print() << L" Log: " << message.ToWString();
+        else if (level == cef_log_severity_t::LOGSEVERITY_FATAL)
+            CASPAR_LOG(fatal) << print() << L" Log: " << message.ToWString();
+        else
+            CASPAR_LOG(info) << print() << L" Log: " << message.ToWString();
         return true;
     }
 
@@ -368,14 +499,20 @@ class html_producer : public core::frame_producer
         , url_(url)
     {
         html::invoke([&] {
-            client_ = new html_client(frame_factory, graph_, format_desc, url_);
+            const bool enable_gpu            = env::properties().get(L"configuration.html.enable-gpu", false);
+            bool       shared_texture_enable = false;
+
+#ifdef WIN32
+            shared_texture_enable = enable_gpu && dx11_device::get_device();
+#endif
+
+            client_ = new html_client(frame_factory, graph_, format_desc, shared_texture_enable, url_);
 
             CefWindowInfo window_info;
             window_info.width                        = format_desc.square_width;
             window_info.height                       = format_desc.square_height;
             window_info.windowless_rendering_enabled = true;
-
-            const bool enable_gpu = env::properties().get(L"configuration.html.enable-gpu", false);
+            window_info.shared_texture_enabled       = shared_texture_enable;
 
             CefBrowserSettings browser_settings;
             browser_settings.web_security = cef_state_t::STATE_DISABLED;
